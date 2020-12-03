@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package proto;
+
+// protoc-gen-go: go get github.com/golang/protobuf/protoc-gen-go@v1.3.2
+// protoc --go_out=plugins=grpc:. *.proto
+// The greeting service definition.
+service Greeter {
+    // Sends a greeting
+    rpc SayHello (HelloRequest) returns (HelloReply) {}
+}
+
+// The request message containing the user's name.
+message HelloRequest {
+    string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+    string message = 1;
+}
