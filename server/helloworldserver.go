@@ -18,9 +18,9 @@ import (
 )
 
 var (
-	serv = flag.String("service", "hello_service", "service name")
+	serv = flag.String("service", "greeter_service", "service name")
 	port = flag.Int("port", 50001, "listening port")
-	reg  = flag.String("reg", "http://127.0.0.1:2379", "register etcd address")
+	reg  = flag.String("reg", "127.0.0.1:2379", "register etcd address")
 )
 
 func main() {
@@ -31,7 +31,8 @@ func main() {
 		panic(err)
 	}
 
-	err = naming.Register(*serv, "127.0.0.1", *port, *reg, time.Second*10, 15)
+	// TODO: find my ip
+	err = naming.Register(*reg, *serv, fmt.Sprintf("%s:%v", "127.0.0.1", *port), naming.Schema, 15)
 	if err != nil {
 		panic(err)
 	}
@@ -41,13 +42,15 @@ func main() {
 	go func() {
 		s := <-ch
 		log.Printf("receive signal '%v'", s)
-		naming.UnRegister()
+		naming.UnRegister(*serv, fmt.Sprintf("%s:%v", "127.0.0.1", *port), naming.Schema)
 		os.Exit(1)
 	}()
 
 	log.Printf("starting hello service at %d", *port)
 	s := grpc.NewServer()
 	pb.RegisterGreeterServer(s, &server{})
+
+	defer s.GracefulStop()
 	s.Serve(lis)
 }
 

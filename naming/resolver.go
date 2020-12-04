@@ -1,39 +1,116 @@
 package naming
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
-	etcd3 "github.com/coreos/etcd/clientv3"
-	"google.golang.org/grpc/naming"
+	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/mvcc/mvccpb"
+	"google.golang.org/grpc/resolver"
 )
 
-// resolver is the implementaion of grpc.naming.Resolver
-type resolver struct {
-	serviceName string // service name to resolve
+const (
+	Schema = "hello"
+)
+
+var cli *clientv3.Client
+
+type etcdResolver struct {
+	rawAddr string
+	schema  string
+	cc      resolver.ClientConn
 }
 
-// NewResolver return resolver with service name
-func NewResolver(serviceName string) *resolver {
-	return &resolver{serviceName: serviceName}
+func NewResolver(etcdAddr, Schema string) resolver.Builder {
+	return &etcdResolver{rawAddr: etcdAddr, schema: Schema}
 }
 
-// Resolve to resolve the service from etcd, target is the dial address of etcd
-// target example: "http://127.0.0.1:2379,http://127.0.0.1:12379,http://127.0.0.1:22379"
-func (re *resolver) Resolve(target string) (naming.Watcher, error) {
-	if re.serviceName == "" {
-		return nil, errors.New("grpclb: no service name provided")
+func (r *etcdResolver) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
+	fmt.Println("target:", target)
+	var err error
+	if cli == nil {
+		cli, err = clientv3.New(clientv3.Config{
+			Endpoints:   strings.Split(r.rawAddr, ";"),
+			DialTimeout: 15 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// generate etcd client
-	client, err := etcd3.New(etcd3.Config{
-		Endpoints: strings.Split(target, ","),
-	})
+	r.cc = cc
+
+	go r.watch("/" + target.Scheme + "/" + target.Endpoint + "/")
+
+	return r, nil
+}
+
+func (r etcdResolver) Scheme() string {
+	return r.schema
+}
+
+func (r etcdResolver) ResolveNow(rn resolver.ResolveNowOptions) {
+	log.Println("ResolveNow")
+}
+
+func (r etcdResolver) Close() {
+	log.Println("Close")
+}
+
+func (r *etcdResolver) watch(keyPrefix string) {
+	var addrList []resolver.Address
+
+	getResp, err := cli.Get(context.Background(), keyPrefix, clientv3.WithPrefix())
 	if err != nil {
-		return nil, fmt.Errorf("grpclb: creat etcd3 client failed: %s", err.Error())
+		log.Println(err)
+	} else {
+		for i := range getResp.Kvs {
+			addrList = append(addrList, resolver.Address{Addr: strings.TrimPrefix(string(getResp.Kvs[i].Key), keyPrefix)})
+		}
 	}
 
-	// Return watcher
-	return &watcher{re: re, client: *client}, nil
+	// 新版本etcd去除了NewAddress方法 以UpdateState代替
+	r.cc.UpdateState(resolver.State{Addresses: addrList})
+
+	rch := cli.Watch(context.Background(), keyPrefix, clientv3.WithPrefix())
+	for n := range rch {
+		for _, ev := range n.Events {
+			addr := strings.TrimPrefix(string(ev.Kv.Key), keyPrefix)
+			switch ev.Type {
+			case mvccpb.PUT:
+				if !exist(addrList, addr) {
+					addrList = append(addrList, resolver.Address{Addr: addr})
+					r.cc.UpdateState(resolver.State{Addresses: addrList})
+				}
+			case mvccpb.DELETE:
+				if s, ok := remove(addrList, addr); ok {
+					addrList = s
+					r.cc.UpdateState(resolver.State{Addresses: addrList})
+				}
+			}
+			log.Printf("%s %q : %q\n", ev.Type, ev.Kv.Key, ev.Kv.Value)
+		}
+	}
+}
+
+func exist(l []resolver.Address, addr string) bool {
+	for i := range l {
+		if l[i].Addr == addr {
+			return true
+		}
+	}
+	return false
+}
+
+func remove(s []resolver.Address, addr string) ([]resolver.Address, bool) {
+	for i := range s {
+		if s[i].Addr == addr {
+			s[i] = s[len(s)-1]
+			return s[:len(s)-1], true
+		}
+	}
+	return nil, false
 }
