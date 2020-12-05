@@ -15,11 +15,9 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
-const (
-	authority = "helloclient"
-)
-
 var (
+	schema = "hello"
+
 	serv = flag.String("service", "greeter_service", "service name")
 	reg  = flag.String("reg", "127.0.0.1:2379", "register etcd address")
 )
@@ -32,12 +30,12 @@ func main() {
 	//grpclog.SetLoggerV2(logger)
 
 	// 解析etcd服务地址
-	r := naming.NewResolver(*reg, naming.Schema)
-	resolver.Register(r)
+	rb := naming.NewResolver(*reg, schema)
+	resolver.Register(rb)
 
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	conn, err := grpc.DialContext(ctx,
-		fmt.Sprintf("%s://%s/%s", naming.Schema, authority, *serv),
+		fmt.Sprintf("%s:///%s", schema, *serv), // "schema://[authority]/service"
 		grpc.WithDefaultServiceConfig(fmt.Sprintf(`{"LoadBalancingPolicy": "%s"}`, roundrobin.Name)),
 		grpc.WithInsecure(),
 	)

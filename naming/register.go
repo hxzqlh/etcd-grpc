@@ -2,6 +2,7 @@ package naming
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ func Register(etcdAddr, name, addr, schema string, ttl int64) error {
 	if cli == nil {
 		cli, err = clientv3.New(clientv3.Config{
 			Endpoints:   strings.Split(etcdAddr, ";"),
-			DialTimeout: 15 * time.Second,
+			DialTimeout: 5 * time.Second,
 		})
 		if err != nil {
 			log.Printf("connect to etcd err:%s", err)
@@ -28,8 +29,7 @@ func Register(etcdAddr, name, addr, schema string, ttl int64) error {
 		for {
 			getResp, err := cli.Get(context.Background(), "/"+schema+"/"+name+"/"+addr)
 			if err != nil {
-				log.Printf("getResp:%+v\n", getResp)
-				log.Printf("Register:%s", err)
+				fmt.Println("etcd get err:", err)
 			} else if getResp.Count == 0 {
 				err = withAlive(name, addr, schema, ttl)
 				if err != nil {
@@ -39,10 +39,10 @@ func Register(etcdAddr, name, addr, schema string, ttl int64) error {
 			<-ticker.C
 		}
 	}()
+
 	return nil
 }
 
-// withAlive 创建租约
 func withAlive(name, addr, schema string, ttl int64) error {
 	leaseResp, err := cli.Grant(context.Background(), ttl)
 	if err != nil {
@@ -62,18 +62,23 @@ func withAlive(name, addr, schema string, ttl int64) error {
 		return err
 	}
 
-	// 清空 keep alive 返回的channel
 	go func() {
-		for {
-			<-ch
+		for leaseKeepResp := range ch {
+			log.Println("续约成功", leaseKeepResp.ID)
 		}
+
+		log.Println("关闭续租")
 	}()
 
 	return nil
 }
 
-func UnRegister(name, addr, schema string) {
+func UnRegister(name, addr, schema string) error {
 	if cli != nil {
-		cli.Delete(context.Background(), "/"+schema+"/"+name+"/"+addr)
+		fmt.Println("unregister...")
+		_, err := cli.Delete(context.Background(), "/"+schema+"/"+name+"/"+addr)
+		return err
 	}
+
+	return nil
 }

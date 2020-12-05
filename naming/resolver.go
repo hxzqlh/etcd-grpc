@@ -12,10 +12,7 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
-const (
-	Schema = "hello"
-)
-
+var schema string
 var cli *clientv3.Client
 
 type etcdResolver struct {
@@ -24,8 +21,8 @@ type etcdResolver struct {
 	cc      resolver.ClientConn
 }
 
-func NewResolver(etcdAddr, Schema string) resolver.Builder {
-	return &etcdResolver{rawAddr: etcdAddr, schema: Schema}
+func NewResolver(etcdAddr, schema string) resolver.Builder {
+	return &etcdResolver{rawAddr: etcdAddr, schema: schema}
 }
 
 func (r *etcdResolver) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
